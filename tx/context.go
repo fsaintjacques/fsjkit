@@ -5,8 +5,8 @@ import (
 	"database/sql"
 )
 
-// TxFromContext returns the transaction from the context.
-func TxFromContext(ctx context.Context) (*sql.Tx, bool) {
+// FromContext returns the transaction from the context.
+func FromContext(ctx context.Context) (*sql.Tx, bool) {
 	tx, ok := ctx.Value(txCtxKey).(*sql.Tx)
 	return tx, ok
 }
@@ -18,4 +18,4 @@ func ContextWithTx(ctx context.Context, tx *sql.Tx) context.Context {
 
 type txCtxKeyType int
 
-var txCtxKey txCtxKeyType = 0
+var txCtxKey txCtxKeyType

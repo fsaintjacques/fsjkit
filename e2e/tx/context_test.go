@@ -14,7 +14,7 @@ func TestTxFromContext(t *testing.T) {
 
 	var (
 		ctx    = context.Background()
-		tx, ok = ftx.TxFromContext(ctx)
+		tx, ok = ftx.FromContext(ctx)
 	)
 
 	assert.Nil(t, tx)
@@ -22,14 +22,14 @@ func TestTxFromContext(t *testing.T) {
 
 	expected := new(sql.Tx)
 	ctx = ftx.ContextWithTx(ctx, expected)
-	tx, ok = ftx.TxFromContext(ctx)
+	tx, ok = ftx.FromContext(ctx)
 
 	assert.Equal(t, expected, tx)
 	assert.True(t, ok)
 
 	newer := new(sql.Tx)
 	ctx = ftx.ContextWithTx(ctx, expected)
-	tx, ok = ftx.TxFromContext(ctx)
+	tx, ok = ftx.FromContext(ctx)
 
 	assert.Equal(t, newer, tx)
 	assert.True(t, ok)
