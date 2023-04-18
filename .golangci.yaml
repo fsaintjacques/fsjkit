@@ -1,0 +1,88 @@
+---
+run:
+  go: "1.19"
+  timeout: 300s
+  skip-dirs:
+  build-tags:
+    - tests
+
+linters-settings:
+  exhaustive:
+    default-signifies-exhaustive: true
+
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/cerbos/cerbos)
+      - blank
+      - dot
+    skip-generated: true
+    custom-order: true
+
+  gofumpt:
+    extra-rules: true
+
+  govet:
+    enable-all: true
+    disable:
+      - shadow
+
+  nolintlint:
+    allow-unused: false
+    allow-leading-space: false
+    require-specific: true
+
+linters:
+  enable:
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - dupl
+    - durationcheck
+    - errorlint
+    - exhaustive
+    - exportloopref
+    - forbidigo
+    - forcetypeassert
+    - goconst
+    - gocritic
+    - godot
+    - gofumpt
+    - goimports
+    - gomnd
+    - gosec
+    - govet
+    - importas
+    - makezero
+    - misspell
+    - nakedret
+    - nestif
+    - nilerr
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - promlinter
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - tenv
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+
+issues:
+  max-same-issues: 30
+
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - forcetypeassert
+        - goconst
+        - gomnd
+        - govet

@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	ftx "github.com/fsaintjacques/fsjkit/tx"
+	"github.com/fsaintjacques/fsjkit/tx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewTransactorPanics(t *testing.T) {
-	assert.Panics(t, func() { ftx.NewTransactor(nil) }, "should panic if db is nil")
+	assert.Panics(t, func() { tx.NewTransactor(nil) }, "should panic if db is nil")
 }
 
 func TestTransactorInterface(t *testing.T) {
@@ -38,18 +38,18 @@ func TestTransactorInterface(t *testing.T) {
 				m.ExpectBegin()
 				m.ExpectRollback()
 			},
-			func(ctx context.Context, tx *sql.Tx) error { return anError },
+			func(ctx context.Context, tx *sql.Tx) error { return errFoo },
 			noOptions,
-			anError,
+			errFoo,
 		},
 		{
 			"BeginsErrorSkipClosure",
 			func(m sqlmock.Sqlmock) {
-				m.ExpectBegin().WillReturnError(anError)
+				m.ExpectBegin().WillReturnError(errFoo)
 			},
 			func(ctx context.Context, tx *sql.Tx) error { panic("unreachable") },
 			noOptions,
-			anError,
+			errFoo,
 		},
 	}
 
@@ -69,7 +69,7 @@ func TestTransactorOptions(t *testing.T) {
 					m.ExpectCommit()
 				},
 				func(ctx context.Context, tx *sql.Tx) error { return nil },
-				[]ftx.TransactorOption{ftx.WithTxOptions(&sql.TxOptions{ReadOnly: true})},
+				[]tx.TransactorOption{tx.WithTxOptions(&sql.TxOptions{ReadOnly: true})},
 				noError,
 			},
 		*/
@@ -81,19 +81,15 @@ func TestTransactorOptions(t *testing.T) {
 				m.ExpectExec("SELECT child").WillReturnResult(nil)
 				m.ExpectCommit()
 			},
-			func(ctx context.Context, tx *sql.Tx) error {
-				tx.ExecContext(ctx, "SELECT parent")
-				txor := ctx.Value(txorKey).(ftx.Transactor)
-				if err := txor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-					tx.ExecContext(ctx, "SELECT child")
+			func(ctx context.Context, txn *sql.Tx) error {
+				txn.ExecContext(ctx, "SELECT parent")
+				txor := ctx.Value(txorKey).(tx.Transactor)
+				return txor.InTx(ctx, func(ctx context.Context, txn *sql.Tx) error {
+					txn.ExecContext(ctx, "SELECT child")
 					return nil
-				}); err != nil {
-					return err
-				}
-
-				return nil
+				})
 			},
-			[]ftx.TransactorOption{ftx.WithRecursiveContext()},
+			[]tx.TransactorOption{tx.WithRecursiveContext()},
 			noError,
 		},
 		{
@@ -103,7 +99,7 @@ func TestTransactorOptions(t *testing.T) {
 				m.ExpectRollback()
 			},
 			func(ctx context.Context, tx *sql.Tx) error { return nil },
-			[]ftx.TransactorOption{ftx.WithAlwaysRollback()},
+			[]tx.TransactorOption{tx.WithAlwaysRollback()},
 			// The explicit rollback is not an error.
 			noError,
 		},
@@ -120,14 +116,14 @@ func TestTransactorOptions(t *testing.T) {
 				tx.Exec("SELECT closure")
 				return nil
 			},
-			[]ftx.TransactorOption{ftx.WithTxMiddlewares(
-				func(fn ftx.TxClosure) ftx.TxClosure {
+			[]tx.TransactorOption{tx.WithMiddlewares(
+				func(fn tx.Closure) tx.Closure {
 					return func(ctx context.Context, tx *sql.Tx) error {
 						tx.ExecContext(ctx, "SET LOCAL myvar = 1")
 						return fn(ctx, tx)
 					}
 				},
-				func(fn ftx.TxClosure) ftx.TxClosure {
+				func(fn tx.Closure) tx.Closure {
 					return func(ctx context.Context, tx *sql.Tx) error {
 						defer tx.ExecContext(ctx, "SELECT in_defer")
 						return fn(ctx, tx)
@@ -150,9 +146,9 @@ type (
 		// Object to set expectations on
 		mockExpectation func(sqlmock.Sqlmock)
 		// Closure passed to Transactor.InTx
-		closure ftx.TxClosure
+		closure tx.Closure
 		// Options passed to NewTransactor
-		options []ftx.TransactorOption
+		options []tx.TransactorOption
 		// Controls how the error from Transactor.InTx is
 		// asserted. It can be a bool, an error, or nil.
 		//
@@ -168,9 +164,9 @@ type (
 )
 
 var (
-	noOptions      = []ftx.TransactorOption{}
-	anError        = errors.New("error")
-	noError   bool = false
+	noOptions = []tx.TransactorOption{}
+	errFoo    = errors.New("error")
+	noError   = false
 )
 
 func (m *transactorMockTest) run(t *testing.T) {
@@ -182,7 +178,7 @@ func (m *transactorMockTest) run(t *testing.T) {
 	m.mockExpectation(mock)
 
 	// Allows closure to access the transactor.
-	transactor := ftx.NewTransactor(db, m.options...)
+	transactor := tx.NewTransactor(db, m.options...)
 	ctx := context.WithValue(context.Background(), txorKey, transactor)
 	err = transactor.InTx(ctx, m.closure)
 
@@ -205,4 +201,4 @@ func (m *transactorMockTest) run(t *testing.T) {
 
 type txorKeyType int
 
-var txorKey txorKeyType = 0
+var txorKey txorKeyType
