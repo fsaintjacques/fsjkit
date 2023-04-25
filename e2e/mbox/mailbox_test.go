@@ -37,6 +37,7 @@ func TestMailbox(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
 
+			//nolint:gosec
 			id := fmt.Sprintf("%d", rand.Int())
 
 			mock.ExpectBegin()
