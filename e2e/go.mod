@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/fsaintjacques/fsjkit/tx v0.0.0
+	github.com/fsaintjacques/fsjkit/mbox v0.0.0
 	github.com/stretchr/testify v1.8.2
 )
 
@@ -14,4 +15,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/fsaintjacques/fsjkit/tx => ../tx
+replace (
+	github.com/fsaintjacques/fsjkit/tx => ../tx
+	github.com/fsaintjacques/fsjkit/mbox => ../mbox
+)
