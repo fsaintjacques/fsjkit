@@ -25,6 +25,9 @@ type (
 		// committed if the closure returns nil, otherwise it is rolled back. It is
 		// important that the closure does not commit or rollback the transaction as
 		// this is handled by the transactor automatically.
+		//
+		// If the Closure calls InTx and the Transactor was created with
+		// WithRecursiveContext, the same transaction will be used.
 		InTx(context.Context, Closure) error
 	}
 
@@ -48,7 +51,7 @@ func WithTxOptions(opts *sql.TxOptions) TransactorOption {
 
 // WithRecursiveContext stashes transaction in context. The transaction is carried
 // through the context and will be re-used by the transactor. In other words, multiple
-// calls to InTx will use the same transaction if the context is passed through.
+// nested calls to InTx will use the same transaction if the context is passed through.
 func WithRecursiveContext() TransactorOption {
 	return txOptFn(func(t *transactor) {
 		t.recursiveContext = true
@@ -81,8 +84,8 @@ func WithMiddlewares(middlewares ...Middleware) TransactorOption {
 	})
 }
 
-// NewTransactor creates a new Transactor that uses the given a TxAble.
-// This function panics if the TxAble is nil. The transactor is responsible
+// NewTransactor creates a new Transactor that uses the given a Opener.
+// This function panics if the Opener is nil. The transactor is responsible
 // for creating and committing or rolling back transactions.
 func NewTransactor(o Opener, opts ...TransactorOption) Transactor {
 	if o == nil {
@@ -95,6 +98,7 @@ func NewTransactor(o Opener, opts ...TransactorOption) Transactor {
 	return t
 }
 
+// InTx implements the Transactor interface.
 func (t *transactor) InTx(ctx context.Context, fn Closure) (err error) {
 	if t.recursiveContext {
 		tx, ok := FromContext(ctx)

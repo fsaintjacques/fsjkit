@@ -48,7 +48,6 @@ linters:
     - goconst
     - gocritic
     - godot
-    - gofumpt
     - goimports
     - gomnd
     - gosec
@@ -69,7 +68,6 @@ linters:
     - sqlclosecheck
     - tenv
     - thelper
-    - tparallel
     - unconvert
     - unparam
     - wastedassign
