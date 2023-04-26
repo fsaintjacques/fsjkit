@@ -15,11 +15,13 @@ type (
 		Payload []byte
 	}
 
-	// Mailbox is a message queue.
+	// Mailbox is a message queue backed by Postgres.
 	Mailbox interface {
 		// Put adds a message to the mailbox. If the method returns an error,
 		// the message is not added to the mailbox and caller is responsible
-		// for retrying and/or rolling back the transaction.
+		// for retrying and/or rolling back the transaction. The transaction is
+		// explicitly passed to the method to allow the caller to control the
+		// transaction boundaries.
 		Put(context.Context, *sql.Tx, *Message) error
 	}
 )
@@ -29,6 +31,7 @@ type (
 //
 // - id VARCHAR(255) PRIMARY KEY
 // - payload BYTEA
+// - create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 //
 // The table name must be fully qualified, for example: "public.mailbox".
 func NewMailbox(table string) Mailbox {
