@@ -2,7 +2,11 @@ package mailbox
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
+
+	"github.com/fsaintjacques/fsjkit/tx"
 )
 
 type (
@@ -103,4 +107,33 @@ const MaxExponentialBackoff = 5 * time.Minute
 func ExponentialBackoff(i int, _ Message) time.Duration {
 	const maxShift = 32
 	return min(10*time.Second*(1<<min(i, maxShift)), MaxExponentialBackoff)
+}
+
+var (
+	// ErrNoTx is returned when the transaction is not found in the context.
+	ErrNoTx = errors.New("no transaction found in context")
+)
+
+// WithMoveToMailbox returns a ConsumeFn that moves the message to the mailbox.
+// This can be paired with WithRetryConsume to implement a dead-letter queue when
+// this ConsumeFn is used as the Final function. In order to use this ConsumeFn,
+// the processor's transactor must be configured with recursive transactions.
+// The enqueueing of the message is done in the same transaction as the
+// processing of the message. This ensures that the message is not lost if the
+// transaction is rolled back.
+func WithMoveToMailbox(m Mailbox) ConsumeFn {
+	return func(ctx context.Context, msg Message) error {
+		// Extract the transaction from the context. This requires that the
+		// processor's transactor is configured with recursive transactions.
+		txn, found := tx.FromContext(ctx)
+		if !found {
+			return ErrNoTx
+		}
+
+		if err := m.Put(ctx, txn, msg); err != nil {
+			return fmt.Errorf("m.Put: %w", err)
+		}
+
+		return nil
+	}
 }
