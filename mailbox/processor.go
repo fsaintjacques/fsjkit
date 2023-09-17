@@ -1,4 +1,4 @@
-package mbox
+package mailbox
 
 import (
 	"context"

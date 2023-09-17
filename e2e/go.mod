@@ -4,7 +4,6 @@ go 1.21
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
-	github.com/fsaintjacques/fsjkit/mbox v0.0.0
 	github.com/fsaintjacques/fsjkit/tx v0.0.0
 	github.com/jackc/pgx/v5 v5.3.1
 	github.com/ory/dockertest/v3 v3.10.0
@@ -50,6 +49,6 @@ require (
 )
 
 replace (
-	github.com/fsaintjacques/fsjkit/mbox => ../mbox
+	github.com/fsaintjacques/fsjkit/mailbox => ../mailbox
 	github.com/fsaintjacques/fsjkit/tx => ../tx
 )

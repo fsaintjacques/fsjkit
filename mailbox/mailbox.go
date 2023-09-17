@@ -1,11 +1,11 @@
-package mbox
+package mailbox
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
 
-	"github.com/fsaintjacques/fsjkit/mbox/internal"
+	"github.com/fsaintjacques/fsjkit/mailbox/internal"
 )
 
 type (

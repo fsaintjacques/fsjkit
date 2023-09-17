@@ -1,4 +1,4 @@
-package mboxtest
+package mailboxtest
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/fsaintjacques/fsjkit/mbox"
+	"github.com/fsaintjacques/fsjkit/mailbox"
 	"github.com/fsaintjacques/fsjkit/tx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,17 +20,17 @@ func TestProcessor(t *testing.T) {
 		db, err    = pg.Open("pgx")
 		transactor = tx.NewTransactor(db)
 		table      = createMailboxTable(t, db)
-		m          = mbox.NewMailbox(table)
+		m          = mailbox.NewMailbox(table)
 	)
 
 	require.NoError(t, err)
 
 	var (
-		noop = func(context.Context, mbox.Message) error { return nil }
+		noop = func(context.Context, mailbox.Message) error { return nil }
 		put  = func(id string) {
 			tx, err := db.Begin()
 			assert.NoError(t, err)
-			assert.NoError(t, m.Put(ctx, tx, mbox.Message{ID: id}))
+			assert.NoError(t, m.Put(ctx, tx, mailbox.Message{ID: id}))
 			assert.NoError(t, tx.Commit())
 		}
 		truncate = func() {
@@ -41,21 +41,21 @@ func TestProcessor(t *testing.T) {
 			assert.NoError(t, tx.Commit())
 		}
 		anError = errors.New("an error")
-		failing = func(context.Context, mbox.Message) error { return anError }
+		failing = func(context.Context, mailbox.Message) error { return anError }
 	)
 
 	t.Run("NewProcessor", func(t *testing.T) {
 		t.Run("ShouldErrorOnNonExistingTable", func(t *testing.T) {
-			_, err := mbox.NewProcessor(ctx, transactor, "notfound")
+			_, err := mailbox.NewProcessor(ctx, transactor, "notfound")
 			assert.Error(t, err)
 		})
 		t.Run("ShouldErrorOnInvalidSchema", func(t *testing.T) {
 			db.ExecContext(ctx, "CREATE TABLE bad (id VARCHAR PRIMARY KEY)")
-			_, err := mbox.NewProcessor(ctx, transactor, "bad")
+			_, err := mailbox.NewProcessor(ctx, transactor, "bad")
 			assert.Error(t, err)
 		})
 		t.Run("Success", func(t *testing.T) {
-			p, err := mbox.NewProcessor(ctx, transactor, table)
+			p, err := mailbox.NewProcessor(ctx, transactor, table)
 			assert.NotNil(t, p)
 			assert.NoError(t, err)
 		})
@@ -64,20 +64,20 @@ func TestProcessor(t *testing.T) {
 	})
 
 	t.Run("Processor.Process", func(t *testing.T) {
-		p, err := mbox.NewProcessor(ctx, transactor, table)
+		p, err := mailbox.NewProcessor(ctx, transactor, table)
 		require.NoError(t, err)
 
 		t.Run("ReturnsErrNoMessageWhenEmpty", func(t *testing.T) {
-			assert.ErrorIs(t, mbox.ErrNoMessage, p.Process(ctx, noop))
+			assert.ErrorIs(t, mailbox.ErrNoMessage, p.Process(ctx, noop))
 			put("a-message")
 			assert.NoError(t, p.Process(ctx, noop))
-			assert.ErrorIs(t, mbox.ErrNoMessage, p.Process(ctx, noop))
+			assert.ErrorIs(t, mailbox.ErrNoMessage, p.Process(ctx, noop))
 		})
 
 		t.Run("EnsureMessageIsConsumed", func(t *testing.T) {
 			put("a-message")
 			assert.NoError(t, p.Process(ctx, noop))
-			assert.ErrorIs(t, mbox.ErrNoMessage, p.Process(ctx, noop))
+			assert.ErrorIs(t, mailbox.ErrNoMessage, p.Process(ctx, noop))
 		})
 
 		t.Run("WrapsConsumeError", func(t *testing.T) {
@@ -90,7 +90,7 @@ func TestProcessor(t *testing.T) {
 
 	t.Run("Processor.Size", func(t *testing.T) {
 		const max = 10
-		p, err := mbox.NewProcessor(ctx, transactor, table)
+		p, err := mailbox.NewProcessor(ctx, transactor, table)
 		require.NoError(t, err)
 
 		size, err := p.Size(ctx)

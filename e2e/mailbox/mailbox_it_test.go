@@ -1,4 +1,4 @@
-package mboxtest
+package mailboxtest
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/fsaintjacques/fsjkit/mbox"
+	"github.com/fsaintjacques/fsjkit/mailbox"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,11 +52,11 @@ func TestMailbox(t *testing.T) {
 	require.NoError(t, err)
 
 	table := createMailboxTable(t, db)
-	m := mbox.NewMailbox(table)
+	m := mailbox.NewMailbox(table)
 
 	tx, err := db.Begin()
 	require.NoError(t, err)
-	m.Put(ctx, tx, mbox.Message{ID: "1", Metadata: metadata("k1", "v1"), Payload: []byte("hello world")})
-	m.Put(ctx, tx, mbox.Message{ID: "2", Payload: []byte("hello world 2")})
+	m.Put(ctx, tx, mailbox.Message{ID: "1", Metadata: metadata("k1", "v1"), Payload: []byte("hello world")})
+	m.Put(ctx, tx, mailbox.Message{ID: "2", Payload: []byte("hello world 2")})
 	require.NoError(t, tx.Commit())
 }
