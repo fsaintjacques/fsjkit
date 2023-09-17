@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/fsaintjacques/fsjkit/mbox"
+	"github.com/fsaintjacques/fsjkit/tx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,12 +15,15 @@ import (
 func TestProcessor(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-	db, err := pg.Open("pgx")
-	require.NoError(t, err)
+	var (
+		ctx        = context.Background()
+		db, err    = pg.Open("pgx")
+		transactor = tx.NewTransactor(db)
+		table      = createMailboxTable(t, db)
+		m          = mbox.NewMailbox(table)
+	)
 
-	table := createMailboxTable(t, db)
-	m := mbox.NewMailbox(table)
+	require.NoError(t, err)
 
 	var (
 		noop = func(context.Context, mbox.Message) error { return nil }
@@ -42,16 +46,16 @@ func TestProcessor(t *testing.T) {
 
 	t.Run("NewProcessor", func(t *testing.T) {
 		t.Run("ShouldErrorOnNonExistingTable", func(t *testing.T) {
-			_, err := mbox.NewProcessor(ctx, db, "notfound")
+			_, err := mbox.NewProcessor(ctx, transactor, "notfound")
 			assert.Error(t, err)
 		})
 		t.Run("ShouldErrorOnInvalidSchema", func(t *testing.T) {
 			db.ExecContext(ctx, "CREATE TABLE bad (id VARCHAR PRIMARY KEY)")
-			_, err := mbox.NewProcessor(ctx, db, "bad")
+			_, err := mbox.NewProcessor(ctx, transactor, "bad")
 			assert.Error(t, err)
 		})
 		t.Run("Success", func(t *testing.T) {
-			p, err := mbox.NewProcessor(ctx, db, table)
+			p, err := mbox.NewProcessor(ctx, transactor, table)
 			assert.NotNil(t, p)
 			assert.NoError(t, err)
 		})
@@ -60,7 +64,7 @@ func TestProcessor(t *testing.T) {
 	})
 
 	t.Run("Processor.Process", func(t *testing.T) {
-		p, err := mbox.NewProcessor(ctx, db, table)
+		p, err := mbox.NewProcessor(ctx, transactor, table)
 		require.NoError(t, err)
 
 		t.Run("ReturnsErrNoMessageWhenEmpty", func(t *testing.T) {
@@ -85,26 +89,27 @@ func TestProcessor(t *testing.T) {
 	})
 
 	t.Run("Processor.Size", func(t *testing.T) {
-		p, err := mbox.NewProcessor(ctx, db, table)
+		const max = 10
+		p, err := mbox.NewProcessor(ctx, transactor, table)
 		require.NoError(t, err)
 
 		size, err := p.Size(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), size)
 
-		for i := 0; i < 10; i++ {
+		for i := 0; i < max; i++ {
 			put(fmt.Sprintf("%d", i))
 		}
 
 		size, err = p.Size(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, int64(10), size)
+		assert.Equal(t, int64(max), size)
 
-		for i := 0; i < 10; i++ {
+		for i := 0; i < max; i++ {
 			require.NoError(t, p.Process(ctx, noop))
 			size, err = p.Size(ctx)
 			require.NoError(t, err)
-			assert.Equal(t, int64(10-(i+1)), size)
+			assert.Equal(t, int64(max-(i+1)), size)
 		}
 	})
 
