@@ -1,4 +1,4 @@
-package mboxtest
+package mailboxtest
 
 import (
 	"e2e/helpers"

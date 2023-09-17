@@ -7,7 +7,7 @@ on:
       - 'v*'
 
 env:
-  MODULES: "./e2e/... ./mbox/... ./tx/..."
+  MODULES: "./e2e/... ./mailbox/... ./tx/..."
 
 jobs:
   test:
@@ -27,7 +27,7 @@ jobs:
           check-latest: true
 
       - name: Test
-        run: go test -v $MODULES 
+        run: go test -v $MODULES
 
   golangci:
     name: Lint

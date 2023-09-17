@@ -1,4 +1,4 @@
-module github.com/fsaintjacques/fsjkit/mbox
+module github.com/fsaintjacques/fsjkit/mailbox
 
 go 1.21
 
