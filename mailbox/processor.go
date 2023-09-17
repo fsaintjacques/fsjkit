@@ -40,9 +40,9 @@ type (
 		// The processor does not have any dead-letter mechanism. If the function
 		// returns an error, the message is re-queued and will be processed again.
 		// It is the responsibility of the caller to handle a maximum number of
-		// retries and/or to move the message to a dead-letter queue. It could be
-		// as simple as incrementing a counter // keyed by the message ID and if
-		// a threshold is reached, move the message to a dead-letter mailbox.
+		// retries and/or to move the message to a dead-letter queue, see the
+		// various middlewares for more details, e.g. WithTimeoutConsume,
+		// WithRetryPolicyConsume.
 		Process(context.Context, ConsumeFn) error
 
 		// Size returns the number of messages in the mailbox.
