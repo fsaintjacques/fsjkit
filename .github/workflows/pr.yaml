@@ -23,11 +23,12 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v4
         with:
-          go-version: 1.21.x
+          go-version-file: ./go.work
+          cache-dependency-path: '*/go.sum'
           check-latest: true
 
       - name: Test
-        run: go test -v $MODULES
+        run: make test
 
   golangci:
     name: Lint
@@ -40,7 +41,8 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v4
         with:
-          go-version: 1.21.x
+          go-version-file: ./go.work
+          cache-dependency-path: '*/go.sum'
           check-latest: true
 
       - name: golangci-lint
