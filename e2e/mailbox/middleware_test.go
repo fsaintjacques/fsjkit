@@ -2,28 +2,28 @@ package mailboxtest
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/fsaintjacques/fsjkit/mailbox"
+	"github.com/fsaintjacques/fsjkit/tx"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConsumeMiddleware(t *testing.T) {
 	var (
-		noop       = func(ctx context.Context, msg mailbox.Message) error { return nil }
-		failing    = func(ctx context.Context, msg mailbox.Message) error { return assert.AnError }
-		ctxConsume = func(ctx context.Context, msg mailbox.Message) error {
-			<-ctx.Done()
-			return ctx.Err()
-		}
-		noDelay = func(int, mailbox.Message) time.Duration { return 0 }
-		ctx     = context.Background()
-		msg     = mailbox.Message{ID: "a-message"}
+		noop     = func(ctx context.Context, msg mailbox.Message) error { return nil }
+		failing  = func(ctx context.Context, msg mailbox.Message) error { return assert.AnError }
+		blocking = func(ctx context.Context, msg mailbox.Message) error { <-ctx.Done(); return ctx.Err() }
+		noDelay  = func(int, mailbox.Message) time.Duration { return 0 }
+		ctx      = context.Background()
+		msg      = mailbox.Message{ID: "a-message"}
 	)
 
 	t.Run("WithTimeoutConsume", func(t *testing.T) {
-		consume := mailbox.WithTimeoutConsume(1)(ctxConsume)
+		consume := mailbox.WithTimeoutConsume(1)(blocking)
 		assert.ErrorIs(t, consume(ctx, msg), context.DeadlineExceeded)
 	})
 
@@ -69,7 +69,7 @@ func TestConsumeMiddleware(t *testing.T) {
 		})
 		t.Run("ContextCancellationRespected", func(t *testing.T) {
 			policy := mailbox.RetryPolicy{MaxAttempts: 100}
-			consume := mailbox.WithTimeoutConsume(1 * time.Millisecond)(mailbox.WithRetryPolicyConsume(policy)(ctxConsume))
+			consume := mailbox.WithTimeoutConsume(1 * time.Millisecond)(mailbox.WithRetryPolicyConsume(policy)(blocking))
 			// If the context is not respected, this would cause the test to timeout.
 			assert.ErrorIs(t, consume(ctx, msg), context.DeadlineExceeded)
 		})
@@ -83,5 +83,84 @@ func TestConsumeMiddleware(t *testing.T) {
 			assert.NoError(t, consume(ctx, msg))
 			assert.True(t, invoked)
 		})
+	})
+
+	t.Run("WithMoveToMailbox", func(t *testing.T) {
+		var (
+			db, err    = pg.Open("pgx")
+			t1, t2     = createMailboxTable(t, db), createMailboxTable(t, db)
+			mbox       = mailbox.NewMailbox(t1)
+			deadletter = mailbox.NewMailbox(t2)
+		)
+		require.NoError(t, err)
+
+		put := func(msg mailbox.Message) {
+			require.NoError(t, tx.NewTransactor(db).InTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+				return mbox.Put(ctx, tx, msg)
+			}))
+		}
+
+		t.Run("MoveToMailbox", func(t *testing.T) {
+			transactor := tx.NewTransactor(db, tx.WithRecursiveContext())
+			processor, err := mailbox.NewProcessor(context.Background(), transactor, t1)
+			require.NoError(t, err)
+
+			// Put a message in t1
+			put(mailbox.Message{ID: "move-me"})
+			// Pop the message in t1 and move it to t2
+			require.NoError(t, processor.Process(ctx, mailbox.WithMoveToMailbox(deadletter)))
+
+			processor, err = mailbox.NewProcessor(context.Background(), transactor, t2)
+			require.NoError(t, err)
+			// Ensure the message is in t2 by consuming it.
+			consume := func(ctx context.Context, msg mailbox.Message) error { assert.Equal(t, msg.ID, "move-me"); return nil }
+			require.NoError(t, processor.Process(ctx, consume))
+		})
+		t.Run("ShouldFailWithoutRecursiveContext", func(t *testing.T) {
+			transactor := tx.NewTransactor(db)
+			processor, err := mailbox.NewProcessor(context.Background(), transactor, t1)
+			require.NoError(t, err)
+			put(mailbox.Message{ID: "move-me"})
+			assert.ErrorIs(t, processor.Process(ctx, mailbox.WithMoveToMailbox(deadletter)), mailbox.ErrNoTx)
+		})
+	})
+
+	t.Run("DeadLetterExample", func(t *testing.T) {
+		var (
+			db, err    = pg.Open("pgx")
+			t1, t2     = createMailboxTable(t, db), createMailboxTable(t, db)
+			mbox       = mailbox.NewMailbox(t1)
+			deadletter = mailbox.NewMailbox(t2)
+			policy     = mailbox.RetryPolicy{
+				MaxAttempts: 3,
+				Backoff:     noDelay,
+				Final:       mailbox.WithMoveToMailbox(deadletter),
+			}
+			// This is a blocking consume function that will block until the context is cancelled. After the all uns
+			// attempts, the message will be moved to the deadletter mailbox.
+			consume = mailbox.WithRetryPolicyConsume(policy)(mailbox.WithTimeoutConsume(1 * time.Millisecond)(blocking))
+		)
+		require.NoError(t, err)
+
+		// Put a message in t1
+		require.NoError(t, tx.NewTransactor(db).InTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+			return mbox.Put(ctx, tx, mailbox.Message{ID: "to-deadletter"})
+		}))
+
+		transactor := tx.NewTransactor(db, tx.WithRecursiveContext())
+		processor, err := mailbox.NewProcessor(context.Background(), transactor, t1)
+		require.NoError(t, err)
+		assert.NoError(t, processor.Process(ctx, consume))
+		assert.ErrorIs(t, processor.Process(ctx, consume), mailbox.ErrNoMessage)
+
+		processor, err = mailbox.NewProcessor(context.Background(), transactor, t2)
+		require.NoError(t, err)
+		// Ensure the message is in deadletter by consuming it.
+		consume = func(ctx context.Context, msg mailbox.Message) error {
+			assert.Equal(t, msg.ID, "to-deadletter")
+			return nil
+		}
+		require.NoError(t, processor.Process(ctx, consume))
+		require.ErrorIs(t, processor.Process(ctx, consume), mailbox.ErrNoMessage)
 	})
 }
