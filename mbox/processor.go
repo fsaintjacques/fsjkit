@@ -56,18 +56,19 @@ type (
 //
 // The context is not persisted and is only used to validate the database connection
 // and schema validation.
-func NewProcessor(ctx context.Context, db *sql.DB, table string) (Processor, error) {
-	//nolint:gosec
-	checkStmt := "SELECT id, payload FROM \"" + table + "\" ORDER BY create_time LIMIT 1"
-	if _, err := db.ExecContext(ctx, checkStmt); err != nil {
-		return nil, fmt.Errorf("invalid table: %w", err)
+func NewProcessor(ctx context.Context, transactor tx.Transactor, table string) (Processor, error) {
+	if err := transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		//nolint:gosec
+		if _, err := tx.ExecContext(ctx, "SELECT id, payload FROM \""+table+"\" ORDER BY create_time LIMIT 1"); err != nil {
+			return fmt.Errorf("invalid table: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
-	txor := tx.NewTransactor(db,
-		tx.WithTxOptions(&sql.TxOptions{Isolation: sql.LevelReadCommitted}))
-
 	return &processor{
-		txor: txor, table: table,
+		transactor: transactor, table: table,
 		claimStmt:  "SELECT id, payload FROM \"" + table + "\" ORDER BY create_time LIMIT 1 FOR UPDATE SKIP LOCKED",
 		deleteStmt: "DELETE FROM \"" + table + "\" WHERE id = $1",
 		countStmt:  "SELECT COUNT(*) FROM \"" + table + "\"",
@@ -76,7 +77,7 @@ func NewProcessor(ctx context.Context, db *sql.DB, table string) (Processor, err
 
 // Process implements the Processor interface.
 func (p *processor) Process(ctx context.Context, consume ConsumeFn) error {
-	return p.txor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	return p.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var msg Message
 
 		if err := tx.QueryRowContext(ctx, p.claimStmt).Scan(&msg.ID, &msg.Payload); errors.Is(err, sql.ErrNoRows) {
@@ -99,7 +100,7 @@ func (p *processor) Process(ctx context.Context, consume ConsumeFn) error {
 
 // Size implements the Processor interface.
 func (p *processor) Size(ctx context.Context) (size int64, err error) {
-	err = p.txor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = p.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx, p.countStmt).Scan(&size); err != nil {
 			return fmt.Errorf("failed to count messages: %w", err)
 		}
@@ -111,7 +112,7 @@ func (p *processor) Size(ctx context.Context) (size int64, err error) {
 type (
 	processor struct {
 		table                            string
-		txor                             tx.Transactor
+		transactor                       tx.Transactor
 		claimStmt, deleteStmt, countStmt string
 	}
 )
