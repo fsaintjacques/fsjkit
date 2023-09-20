@@ -49,19 +49,12 @@ func WithTxOptions(opts *sql.TxOptions) TransactorOption {
 	})
 }
 
-// WithRecursiveContext stashes transaction in context. The transaction is carried
-// through the context and will be re-used by the transactor. In other words, multiple
-// nested calls to InTx will use the same transaction if the context is passed through.
-func WithRecursiveContext() TransactorOption {
+// WithSavepoints enables the use of savepoints for the transactor. This
+// allows the transactor to create nested transactions. Don't use this option
+// if the database does not support savepoints.
+func WithSavepoints() TransactorOption {
 	return txOptFn(func(t *transactor) {
-		t.recursiveContext = true
-	})
-}
-
-// WithAlwaysRollback forces the transactor to always rollback the transaction.
-func WithAlwaysRollback() TransactorOption {
-	return txOptFn(func(t *transactor) {
-		t.alwaysRollback = true
+		t.useSavepoints = true
 	})
 }
 
@@ -100,20 +93,17 @@ func NewTransactor(o Opener, opts ...TransactorOption) Transactor {
 
 // InTx implements the Transactor interface.
 func (t *transactor) InTx(ctx context.Context, fn Closure) (err error) {
-	if t.recursiveContext {
-		tx, ok := FromContext(ctx)
-		if ok {
-			// Do not perform any commit or rollback operations since
-			// the transaction was not created in this call. An ancestor
-			// call will handle the commit or rollback.
-			return fn(ctx, tx)
-		}
+	sp, opened, err := t.begin(ctx, t.txOptions)
+	if err != nil {
+		return err
 	}
 
-	var tx *sql.Tx
-	tx, err = t.opener.BeginTx(ctx, t.txOptions)
-	if err != nil {
-		return fmt.Errorf("db.BeginTx: %w", err)
+	if opened {
+		ctx = contextWithSavepointTx(ctx, sp)
+		if t.middlewareChain != nil {
+			// Middleware is executed only once per opened transaction.
+			fn = t.middlewareChain(fn)
+		}
 	}
 
 	// Defer the commit or rollback of the transaction. This will be executed
@@ -122,29 +112,37 @@ func (t *transactor) InTx(ctx context.Context, fn Closure) (err error) {
 		// In case of a panic due to the closure, rollback the transaction and
 		// then re-panic the original message.
 		if r := recover(); r != nil {
-			_ = tx.Rollback()
+			_ = sp.Rollback()
 			panic(r)
 		}
-
-		if err != nil || t.alwaysRollback {
-			_ = tx.Rollback()
-		} else if err = tx.Commit(); err != nil {
+		if err != nil {
+			_ = sp.Rollback()
+		} else if err = sp.Commit(); err != nil {
 			// If the closure did not return an error, but the commit failed,
 			// return the commit error.
-			err = fmt.Errorf("tx.Commit: %w", err)
+			err = fmt.Errorf("sp.Commit: %w", err)
 		}
 	}()
 
-	if t.recursiveContext {
-		// Pass the transaction through the context.
-		ctx = ContextWithTx(ctx, tx)
+	return fn(ctx, sp.Tx)
+}
+
+func (t *transactor) begin(ctx context.Context, opts *sql.TxOptions) (*savepointTx, bool, error) {
+	sp, found := savepointTxFromContext(ctx)
+	if found {
+		_, err := sp.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, false, fmt.Errorf("sp.BeginTx: %w", err)
+		}
+		return sp, false, nil
 	}
 
-	if t.middlewareChain != nil {
-		fn = t.middlewareChain(fn)
+	tx, err := t.opener.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, false, fmt.Errorf("t.opener.BeginTx: %w", err)
 	}
 
-	return fn(ctx, tx)
+	return newSavepointTx(tx, t.useSavepoints), true, nil
 }
 
 func chainMiddlewares(middlewares ...Middleware) Middleware {
@@ -160,10 +158,9 @@ type (
 	transactor struct {
 		opener Opener
 
-		middlewareChain  Middleware
-		txOptions        *sql.TxOptions
-		recursiveContext bool
-		alwaysRollback   bool
+		middlewareChain Middleware
+		txOptions       *sql.TxOptions
+		useSavepoints   bool
 	}
 
 	txOptFn func(*transactor)

@@ -101,7 +101,7 @@ func TestConsumeMiddleware(t *testing.T) {
 		}
 
 		t.Run("MoveToMailbox", func(t *testing.T) {
-			transactor := tx.NewTransactor(db, tx.WithRecursiveContext())
+			transactor := tx.NewTransactor(db)
 			processor, err := mailbox.NewProcessor(context.Background(), transactor, t1)
 			require.NoError(t, err)
 
@@ -115,13 +115,6 @@ func TestConsumeMiddleware(t *testing.T) {
 			// Ensure the message is in t2 by consuming it.
 			consume := func(ctx context.Context, msg mailbox.Message) error { assert.Equal(t, msg.ID, "move-me"); return nil }
 			require.NoError(t, processor.Process(ctx, consume))
-		})
-		t.Run("ShouldFailWithoutRecursiveContext", func(t *testing.T) {
-			transactor := tx.NewTransactor(db)
-			processor, err := mailbox.NewProcessor(context.Background(), transactor, t1)
-			require.NoError(t, err)
-			put(mailbox.Message{ID: "move-me"})
-			assert.ErrorIs(t, processor.Process(ctx, mailbox.WithMoveToMailbox(deadletter)), mailbox.ErrNoTx)
 		})
 	})
 
@@ -147,7 +140,7 @@ func TestConsumeMiddleware(t *testing.T) {
 			return mbox.Put(ctx, tx, mailbox.Message{ID: "to-deadletter"})
 		}))
 
-		transactor := tx.NewTransactor(db, tx.WithRecursiveContext())
+		transactor := tx.NewTransactor(db)
 		processor, err := mailbox.NewProcessor(context.Background(), transactor, t1)
 		require.NoError(t, err)
 		assert.NoError(t, processor.Process(ctx, consume))
