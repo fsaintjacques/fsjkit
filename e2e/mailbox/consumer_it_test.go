@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProcessor(t *testing.T) {
+func TestConsumer(t *testing.T) {
 	t.Parallel()
 
 	var (
@@ -44,56 +44,59 @@ func TestProcessor(t *testing.T) {
 		failing = func(context.Context, mailbox.Message) error { return anError }
 	)
 
-	t.Run("NewProcessor", func(t *testing.T) {
+	t.Run("NewConsumer", func(t *testing.T) {
 		t.Run("ShouldErrorOnNonExistingTable", func(t *testing.T) {
-			_, err := mailbox.NewProcessor(ctx, transactor, "notfound")
+			_, err := mailbox.NewConsumer(ctx, transactor, "notfound", noop)
 			assert.Error(t, err)
 		})
 		t.Run("ShouldErrorOnInvalidSchema", func(t *testing.T) {
 			db.ExecContext(ctx, "CREATE TABLE bad (id VARCHAR PRIMARY KEY)")
-			_, err := mailbox.NewProcessor(ctx, transactor, "bad")
+			_, err := mailbox.NewConsumer(ctx, transactor, "bad", noop)
 			assert.Error(t, err)
 		})
 		t.Run("Success", func(t *testing.T) {
-			p, err := mailbox.NewProcessor(ctx, transactor, table)
-			assert.NotNil(t, p)
+			c, err := mailbox.NewConsumer(ctx, transactor, table, noop)
+			assert.NotNil(t, c)
 			assert.NoError(t, err)
 		})
 
 		truncate()
 	})
 
-	t.Run("Processor.Process", func(t *testing.T) {
-		p, err := mailbox.NewProcessor(ctx, transactor, table)
+	t.Run("Consumer.Consume", func(t *testing.T) {
+		c, err := mailbox.NewConsumer(ctx, transactor, table, noop)
 		require.NoError(t, err)
 
 		t.Run("ReturnsErrNoMessageWhenEmpty", func(t *testing.T) {
-			assert.ErrorIs(t, mailbox.ErrNoMessage, p.Process(ctx, noop))
+			assert.ErrorIs(t, mailbox.ErrNoMessage, c.Consume(ctx))
 			put("a-message")
-			assert.NoError(t, p.Process(ctx, noop))
-			assert.ErrorIs(t, mailbox.ErrNoMessage, p.Process(ctx, noop))
+			assert.NoError(t, c.Consume(ctx))
+			assert.ErrorIs(t, mailbox.ErrNoMessage, c.Consume(ctx))
 		})
 
 		t.Run("EnsureMessageIsConsumed", func(t *testing.T) {
 			put("a-message")
-			assert.NoError(t, p.Process(ctx, noop))
-			assert.ErrorIs(t, mailbox.ErrNoMessage, p.Process(ctx, noop))
+			assert.NoError(t, c.Consume(ctx))
+			assert.ErrorIs(t, mailbox.ErrNoMessage, c.Consume(ctx))
 		})
+
+		c, err = mailbox.NewConsumer(ctx, transactor, table, failing)
+		require.NoError(t, err)
 
 		t.Run("WrapsConsumeError", func(t *testing.T) {
 			put("a-message")
-			assert.ErrorIs(t, p.Process(ctx, failing), anError)
+			assert.ErrorIs(t, c.Consume(ctx), anError)
 		})
 
 		truncate()
 	})
 
-	t.Run("Processor.Size", func(t *testing.T) {
+	t.Run("Consumer.Size", func(t *testing.T) {
 		const max = 10
-		p, err := mailbox.NewProcessor(ctx, transactor, table)
+		c, err := mailbox.NewConsumer(ctx, transactor, table, noop)
 		require.NoError(t, err)
 
-		size, err := p.Size(ctx)
+		size, err := c.Size(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), size)
 
@@ -101,13 +104,13 @@ func TestProcessor(t *testing.T) {
 			put(fmt.Sprintf("%d", i))
 		}
 
-		size, err = p.Size(ctx)
+		size, err = c.Size(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, int64(max), size)
 
 		for i := 0; i < max; i++ {
-			require.NoError(t, p.Process(ctx, noop))
-			size, err = p.Size(ctx)
+			require.NoError(t, c.Consume(ctx))
+			size, err = c.Size(ctx)
 			require.NoError(t, err)
 			assert.Equal(t, int64(max-(i+1)), size)
 		}

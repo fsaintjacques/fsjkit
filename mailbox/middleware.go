@@ -117,14 +117,14 @@ var (
 // WithMoveToMailbox returns a ConsumeFn that moves the message to the mailbox.
 // This can be paired with WithRetryConsume to implement a dead-letter queue when
 // this ConsumeFn is used as the Final function. In order to use this ConsumeFn,
-// the processor's transactor must be configured with recursive transactions.
+// the consumer's transactor must be configured with recursive transactions.
 // The enqueueing of the message is done in the same transaction as the
 // processing of the message. This ensures that the message is not lost if the
 // transaction is rolled back.
 func WithMoveToMailbox(m Mailbox) ConsumeFn {
 	return func(ctx context.Context, msg Message) error {
 		// Extract the transaction from the context. This requires that the
-		// processor's transactor is configured with recursive transactions.
+		// consumer's transactor is configured with recursive transactions.
 		txn, found := tx.FromContext(ctx)
 		if !found {
 			return ErrNoTx
