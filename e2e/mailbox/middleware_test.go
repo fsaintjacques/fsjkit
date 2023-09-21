@@ -102,19 +102,19 @@ func TestConsumeMiddleware(t *testing.T) {
 
 		t.Run("MoveToMailbox", func(t *testing.T) {
 			transactor := tx.NewTransactor(db)
-			processor, err := mailbox.NewProcessor(context.Background(), transactor, t1)
+			processor, err := mailbox.NewProcessor(context.Background(), transactor, t1, mailbox.WithMoveToMailbox(deadletter))
 			require.NoError(t, err)
 
 			// Put a message in t1
 			put(mailbox.Message{ID: "move-me"})
 			// Pop the message in t1 and move it to t2
-			require.NoError(t, processor.Process(ctx, mailbox.WithMoveToMailbox(deadletter)))
+			require.NoError(t, processor.Process(ctx))
 
-			processor, err = mailbox.NewProcessor(context.Background(), transactor, t2)
+			consume := func(ctx context.Context, msg mailbox.Message) error { assert.Equal(t, msg.ID, "move-me"); return nil }
+			processor, err = mailbox.NewProcessor(context.Background(), transactor, t2, consume)
 			require.NoError(t, err)
 			// Ensure the message is in t2 by consuming it.
-			consume := func(ctx context.Context, msg mailbox.Message) error { assert.Equal(t, msg.ID, "move-me"); return nil }
-			require.NoError(t, processor.Process(ctx, consume))
+			require.NoError(t, processor.Process(ctx))
 		})
 	})
 
@@ -141,19 +141,22 @@ func TestConsumeMiddleware(t *testing.T) {
 		}))
 
 		transactor := tx.NewTransactor(db)
-		processor, err := mailbox.NewProcessor(context.Background(), transactor, t1)
+		p, err := mailbox.NewProcessor(context.Background(), transactor, t1, consume)
 		require.NoError(t, err)
-		assert.NoError(t, processor.Process(ctx, consume))
-		assert.ErrorIs(t, processor.Process(ctx, consume), mailbox.ErrNoMessage)
+		assert.NoError(t, p.Process(ctx))
+		assert.ErrorIs(t, p.Process(ctx), mailbox.ErrNoMessage)
 
-		processor, err = mailbox.NewProcessor(context.Background(), transactor, t2)
-		require.NoError(t, err)
+		var consumed bool
 		// Ensure the message is in deadletter by consuming it.
 		consume = func(ctx context.Context, msg mailbox.Message) error {
+			consumed = true
 			assert.Equal(t, msg.ID, "to-deadletter")
 			return nil
 		}
-		require.NoError(t, processor.Process(ctx, consume))
-		require.ErrorIs(t, processor.Process(ctx, consume), mailbox.ErrNoMessage)
+		p, err = mailbox.NewProcessor(context.Background(), transactor, t2, consume)
+		require.NoError(t, err)
+		require.NoError(t, p.Process(ctx))
+		require.ErrorIs(t, p.Process(ctx), mailbox.ErrNoMessage)
+		assert.True(t, consumed)
 	})
 }

@@ -43,7 +43,7 @@ type (
 		// retries and/or to move the message to a dead-letter queue, see the
 		// various middlewares for more details, e.g. WithTimeoutConsume,
 		// WithRetryPolicyConsume.
-		Process(context.Context, ConsumeFn) error
+		Process(context.Context) error
 
 		// Size returns the number of messages in the mailbox.
 		Size(context.Context) (size int64, err error)
@@ -56,7 +56,7 @@ type (
 //
 // The context is not persisted and is only used to validate the database connection
 // and schema validation.
-func NewProcessor(ctx context.Context, transactor tx.Transactor, table string) (Processor, error) {
+func NewProcessor(ctx context.Context, transactor tx.Transactor, table string, consume ConsumeFn) (Processor, error) {
 	if err := transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		//nolint:gosec
 		if _, err := tx.ExecContext(ctx, "SELECT id, payload FROM \""+table+"\" ORDER BY create_time LIMIT 1"); err != nil {
@@ -68,7 +68,9 @@ func NewProcessor(ctx context.Context, transactor tx.Transactor, table string) (
 	}
 
 	return &processor{
-		transactor: transactor, table: table,
+		transactor: transactor,
+		consume:    consume,
+		table:      table,
 		claimStmt:  "SELECT id, payload FROM \"" + table + "\" ORDER BY create_time LIMIT 1 FOR UPDATE SKIP LOCKED",
 		deleteStmt: "DELETE FROM \"" + table + "\" WHERE id = $1",
 		countStmt:  "SELECT COUNT(*) FROM \"" + table + "\"",
@@ -76,7 +78,7 @@ func NewProcessor(ctx context.Context, transactor tx.Transactor, table string) (
 }
 
 // Process implements the Processor interface.
-func (p *processor) Process(ctx context.Context, consume ConsumeFn) error {
+func (p *processor) Process(ctx context.Context) error {
 	return p.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var msg Message
 
@@ -86,7 +88,7 @@ func (p *processor) Process(ctx context.Context, consume ConsumeFn) error {
 			return fmt.Errorf("failed claiming message: %w", err)
 		}
 
-		if err := consume(ctx, msg); err != nil {
+		if err := p.consume(ctx, msg); err != nil {
 			return fmt.Errorf("failed processing message: %w", err)
 		}
 
@@ -111,8 +113,9 @@ func (p *processor) Size(ctx context.Context) (size int64, err error) {
 
 type (
 	processor struct {
-		table                            string
 		transactor                       tx.Transactor
+		consume                          ConsumeFn
+		table                            string
 		claimStmt, deleteStmt, countStmt string
 	}
 )
