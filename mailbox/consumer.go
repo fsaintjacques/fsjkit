@@ -13,50 +13,50 @@ import (
 var ErrNoMessage = errors.New("no message in mailbox")
 
 type (
-	// ConsumeFn is the function that is called by the processor to consume a
+	// ConsumeFn is the function that is called by the consumer on a
 	// message. If the function returns an error, the message is re-queued and
 	// will be processed again until success.
 	ConsumeFn = func(context.Context, Message) error
 
-	// Processor consumes messages from the mailbox. Once a message is processed,
-	// it is removed from the mailbox. The processing is controlled by the caller
-	// via the Process method. The caller is responsible to call this method in
-	// a loop. The processor does not have any background goroutines.
-	Processor interface {
-		// Process processes messages from the mailbox. It is safe to call this
+	// Consumer consumes messages from the mailbox. Once a message is processed,
+	// it is removed from the mailbox. The draining is controlled by the caller
+	// via the Consume method. The caller is responsible to call this method in
+	// a loop. The consumer does not have any background goroutines.
+	Consumer interface {
+		// Consume consumes messages from the mailbox. It is safe to call this
 		// method concurrently. This method is meant to be called in a loop, the
 		// caller is responsible to apply back-pressure if needed.
 		//
 		// It is recommended that the function:
 		//   - is idempotent, it may be called multiple times for the same message
 		//   - returns quickly to avoid holding the row lock for too long
-		//   - does not call other methods on the processor to avoid deadlocks
+		//   - does not call other methods on the consumer to avoid deadlocks
 		//
 		// The following errors are returned:
-		//   - nil: a message was successfully processed
-		//   - ErrNoMessage: the mailbox is empty and no message was processed
-		// 	 - Any other error: an error occurred while processing a message
+		//   - nil: a message was successfully consumed
+		//   - ErrNoMessage: the mailbox is empty and no message was consumed
+		// 	 - Any other error: an error occurred while consuming a message
 		//
-		// The processor does not have any dead-letter mechanism. If the function
+		// The consumer does not have any dead-letter mechanism. If the function
 		// returns an error, the message is re-queued and will be processed again.
 		// It is the responsibility of the caller to handle a maximum number of
 		// retries and/or to move the message to a dead-letter queue, see the
 		// various middlewares for more details, e.g. WithTimeoutConsume,
 		// WithRetryPolicyConsume.
-		Process(context.Context) error
+		Consume(context.Context) error
 
 		// Size returns the number of messages in the mailbox.
 		Size(context.Context) (size int64, err error)
 	}
 )
 
-// NewProcessor creates a new processor. The table must exist and have the same
-// schema as required by Mailbox. The processor does not have any background
+// NewConsumer creates a new consumer. The table must exist and have the same
+// schema as required by Mailbox. The consumer does not have any background
 // goroutines, the caller is responsible to drive the draining in an infinite loop.
 //
 // The context is not persisted and is only used to validate the database connection
 // and schema validation.
-func NewProcessor(ctx context.Context, transactor tx.Transactor, table string, consume ConsumeFn) (Processor, error) {
+func NewConsumer(ctx context.Context, transactor tx.Transactor, table string, consume ConsumeFn) (Consumer, error) {
 	if err := transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		//nolint:gosec
 		if _, err := tx.ExecContext(ctx, "SELECT id, payload FROM \""+table+"\" ORDER BY create_time LIMIT 1"); err != nil {
@@ -67,7 +67,7 @@ func NewProcessor(ctx context.Context, transactor tx.Transactor, table string, c
 		return nil, err
 	}
 
-	return &processor{
+	return &consumer{
 		transactor: transactor,
 		consume:    consume,
 		table:      table,
@@ -77,22 +77,22 @@ func NewProcessor(ctx context.Context, transactor tx.Transactor, table string, c
 	}, nil
 }
 
-// Process implements the Processor interface.
-func (p *processor) Process(ctx context.Context) error {
-	return p.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+// Consume implements the Consumer interface.
+func (c *consumer) Consume(ctx context.Context) error {
+	return c.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var msg Message
 
-		if err := tx.QueryRowContext(ctx, p.claimStmt).Scan(&msg.ID, &msg.Payload); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, c.claimStmt).Scan(&msg.ID, &msg.Payload); errors.Is(err, sql.ErrNoRows) {
 			return ErrNoMessage
 		} else if err != nil {
 			return fmt.Errorf("failed claiming message: %w", err)
 		}
 
-		if err := p.consume(ctx, msg); err != nil {
-			return fmt.Errorf("failed processing message: %w", err)
+		if err := c.consume(ctx, msg); err != nil {
+			return fmt.Errorf("failed consuming message: %w", err)
 		}
 
-		if _, err := tx.ExecContext(ctx, p.deleteStmt, msg.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, c.deleteStmt, msg.ID); err != nil {
 			return fmt.Errorf("failed to delete message: %w", err)
 		}
 
@@ -100,10 +100,10 @@ func (p *processor) Process(ctx context.Context) error {
 	})
 }
 
-// Size implements the Processor interface.
-func (p *processor) Size(ctx context.Context) (size int64, err error) {
-	err = p.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, p.countStmt).Scan(&size); err != nil {
+// Size implements the Consumer interface.
+func (c *consumer) Size(ctx context.Context) (size int64, err error) {
+	err = c.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, c.countStmt).Scan(&size); err != nil {
 			return fmt.Errorf("failed to count messages: %w", err)
 		}
 		return nil
@@ -112,7 +112,7 @@ func (p *processor) Size(ctx context.Context) (size int64, err error) {
 }
 
 type (
-	processor struct {
+	consumer struct {
 		transactor                       tx.Transactor
 		consume                          ConsumeFn
 		table                            string
