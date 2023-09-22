@@ -8,9 +8,7 @@ import (
 
 type (
 	// Closure is a function that is executed within a transaction.
-	// The function should not commit or rollback the transaction. The closure
-	// must pass the context down to the next layer for some options to be used, like
-	// WithRecursiveContext.
+	// The function should not commit or rollback the transaction.
 	Closure func(context.Context, *sql.Tx) error
 
 	// TransactorOption affects the behavior of a Transactor.
@@ -24,10 +22,8 @@ type (
 		// InTx executes the given closure within a transaction. The transaction is
 		// committed if the closure returns nil, otherwise it is rolled back. It is
 		// important that the closure does not commit or rollback the transaction as
-		// this is handled by the transactor automatically.
-		//
-		// If the Closure calls InTx and the Transactor was created with
-		// WithRecursiveContext, the same transaction will be used.
+		// this is handled by the transactor automatically. Recursively calling InTx
+		// will re-use the same transaction.
 		InTx(context.Context, Closure) error
 	}
 
@@ -52,6 +48,11 @@ func WithTxOptions(opts *sql.TxOptions) TransactorOption {
 // WithSavepoints enables the use of savepoints for the transactor. This
 // allows the transactor to create nested transactions. Don't use this option
 // if the database does not support savepoints.
+//
+// When a failing children InTx is rolled back, the parent InTx is not rolled
+// back, only the savepoint opened by the child is rolled back. This allows
+// the parent to continue executing and commit or rollback the transaction depending
+// on the course of action decided by the parent.
 func WithSavepoints() TransactorOption {
 	return txOptFn(func(t *transactor) {
 		t.useSavepoints = true
@@ -61,10 +62,9 @@ func WithSavepoints() TransactorOption {
 // WithMiddlewares adds middlewares to the transactor. Middlewares are
 // functions that are executed before and after the closure. The middlewares
 // can be used to perform logging, metrics, or other operations. The middle
-// functions are executed in the order they are passed.
-//
-// When paired with WithRecursiveContext, the middlewares are executed only
-// once per transaction and not for each call to InTx.
+// functions are executed in the order they are passed. The middlewares are
+// executed only once per opened transaction, not for each recursive call to
+// InTx.
 //
 // If a middleware returns an error, the transaction is rolled back and the
 // error is returned to the caller.
