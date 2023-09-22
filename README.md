@@ -6,7 +6,7 @@ A potpourri of go modules that are useful across projects.
 
 - `tx`: The transaction module adds various wrappers over `sql.Tx`, notably
   `tx.Transactor` a transaction manager.
-- `mailbox`: The mailbox module expose the `Mailbox` and `Processor`, which allows
+- `mailbox`: The mailbox module expose the `Mailbox` and `Consumer`, which allows
   implementing the [outbox pattern](https://microservices.io/patterns/data/transactional-outbox.html) and more.
 
 ## Testing
