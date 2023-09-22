@@ -122,6 +122,38 @@ func ExponentialBackoff(i int, _ Message) time.Duration {
 	return min(10*time.Second*(1<<min(i, maxShift)), MaxExponentialBackoff)
 }
 
+type (
+	// Filter is a function that returns true if the message should be
+	// given to this consumer.
+	MatchFn func(Message) bool
+
+	// Route is a pair of MatchFn and ConsumeFn. They define the routing
+	// rules for a message.
+	Route struct {
+		Match   MatchFn
+		Consume ConsumeFn
+	}
+)
+
+var (
+	// ErrNoRouteMatch is returned when no route matches the message.
+	ErrNoRouteMatch = errors.New("no route matches the message")
+)
+
+// RoutingConsumer returns a ConsumeFn that routes the message to the first
+// route that matches the message according to the order of the routes.
+// If no route matches the message, it returns ErrNoRouteMatch.
+func RoutingConsumer(routes ...Route) ConsumeFn {
+	return func(ctx context.Context, msg Message) error {
+		for _, route := range routes {
+			if route.Match(msg) {
+				return route.Consume(ctx, msg)
+			}
+		}
+		return ErrNoRouteMatch
+	}
+}
+
 var (
 	// ErrNoTx is returned when the transaction is not found in the context.
 	ErrNoTx = errors.New("no transaction found in context")
