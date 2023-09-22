@@ -22,11 +22,6 @@ func TestConsumeMiddleware(t *testing.T) {
 		msg      = mailbox.Message{ID: "a-message"}
 	)
 
-	t.Run("WithTimeoutConsume", func(t *testing.T) {
-		consume := mailbox.WithTimeoutConsume(1)(blocking)
-		assert.ErrorIs(t, consume(ctx, msg), context.DeadlineExceeded)
-	})
-
 	t.Run("WithRetryPolicyConsume", func(t *testing.T) {
 		t.Run("ExponentialBackoff", func(t *testing.T) {
 			assert.Equal(t, 10*time.Second, mailbox.ExponentialBackoff(0, msg))
@@ -67,11 +62,16 @@ func TestConsumeMiddleware(t *testing.T) {
 			consume := mailbox.WithRetryPolicyConsume(policy)(noop)
 			assert.NoError(t, consume(ctx, msg))
 		})
-		t.Run("ContextCancellationRespected", func(t *testing.T) {
-			policy := mailbox.RetryPolicy{MaxAttempts: 100}
-			consume := mailbox.WithTimeoutConsume(1 * time.Millisecond)(mailbox.WithRetryPolicyConsume(policy)(blocking))
+		t.Run("ContextCancellationAndAttemptTimeoutAreRespected", func(t *testing.T) {
+			var failed bool
+			policy := mailbox.RetryPolicy{
+				MaxAttempts: 1, AttemptTimeout: time.Millisecond, Backoff: noDelay,
+				Final: func(_ context.Context, _ mailbox.Message) error { failed = true; return nil },
+			}
+			consume := mailbox.WithRetryPolicyConsume(policy)(blocking)
 			// If the context is not respected, this would cause the test to timeout.
-			assert.ErrorIs(t, consume(ctx, msg), context.DeadlineExceeded)
+			assert.NoError(t, consume(ctx, msg))
+			assert.True(t, failed)
 		})
 		t.Run("FinalIsInvoked", func(t *testing.T) {
 			var invoked bool
@@ -95,14 +95,14 @@ func TestConsumeMiddleware(t *testing.T) {
 		require.NoError(t, err)
 
 		put := func(msg mailbox.Message) {
-			require.NoError(t, tx.NewTransactor(db).InTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+			require.NoError(t, tx.NewTransactor(db).InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 				return mbox.Put(ctx, tx, msg)
 			}))
 		}
 
 		t.Run("MoveToMailbox", func(t *testing.T) {
 			transactor := tx.NewTransactor(db)
-			c, err := mailbox.NewConsumer(context.Background(), transactor, t1, mailbox.WithMoveToMailbox(deadletter))
+			c, err := mailbox.NewConsumer(ctx, transactor, t1, mailbox.WithMoveToMailbox(deadletter))
 			require.NoError(t, err)
 
 			// Put a message in t1
@@ -111,7 +111,7 @@ func TestConsumeMiddleware(t *testing.T) {
 			require.NoError(t, c.Consume(ctx))
 
 			consume := func(ctx context.Context, msg mailbox.Message) error { assert.Equal(t, msg.ID, "move-me"); return nil }
-			c, err = mailbox.NewConsumer(context.Background(), transactor, t2, consume)
+			c, err = mailbox.NewConsumer(ctx, transactor, t2, consume)
 			require.NoError(t, err)
 			// Ensure the message is in t2 by consuming it.
 			require.NoError(t, c.Consume(ctx))
@@ -125,23 +125,24 @@ func TestConsumeMiddleware(t *testing.T) {
 			mbox       = mailbox.NewMailbox(t1)
 			deadletter = mailbox.NewMailbox(t2)
 			policy     = mailbox.RetryPolicy{
-				MaxAttempts: 3,
-				Backoff:     noDelay,
-				Final:       mailbox.WithMoveToMailbox(deadletter),
+				MaxAttempts:    3,
+				AttemptTimeout: 1 * time.Millisecond,
+				Backoff:        noDelay,
+				Final:          mailbox.WithMoveToMailbox(deadletter),
 			}
 			// This is a blocking consume function that will block until the context is cancelled. After the all uns
 			// attempts, the message will be moved to the deadletter mailbox.
-			consume = mailbox.WithRetryPolicyConsume(policy)(mailbox.WithTimeoutConsume(1 * time.Millisecond)(blocking))
+			consume = mailbox.WithRetryPolicyConsume(policy)(blocking)
 		)
 		require.NoError(t, err)
 
 		// Put a message in t1
-		require.NoError(t, tx.NewTransactor(db).InTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+		require.NoError(t, tx.NewTransactor(db).InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			return mbox.Put(ctx, tx, mailbox.Message{ID: "to-deadletter"})
 		}))
 
 		transactor := tx.NewTransactor(db)
-		c, err := mailbox.NewConsumer(context.Background(), transactor, t1, consume)
+		c, err := mailbox.NewConsumer(ctx, transactor, t1, consume)
 		require.NoError(t, err)
 		assert.NoError(t, c.Consume(ctx))
 		assert.ErrorIs(t, c.Consume(ctx), mailbox.ErrNoMessage)
@@ -153,7 +154,7 @@ func TestConsumeMiddleware(t *testing.T) {
 			assert.Equal(t, msg.ID, "to-deadletter")
 			return nil
 		}
-		c, err = mailbox.NewConsumer(context.Background(), transactor, t2, consume)
+		c, err = mailbox.NewConsumer(ctx, transactor, t2, consume)
 		require.NoError(t, err)
 		require.NoError(t, c.Consume(ctx))
 		require.ErrorIs(t, c.Consume(ctx), mailbox.ErrNoMessage)

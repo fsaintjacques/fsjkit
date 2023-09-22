@@ -15,26 +15,14 @@ type (
 	ConsumeMiddleware = func(ConsumeFn) ConsumeFn
 )
 
-// WithTimeoutConsume returns a ConsumeMiddleware that wraps the ConsumeFn with
-// a timeout. If the timeout is reached, the context is canceled and the
-// ConsumeFn is interrupted. The ConsumeFn is responsible to respect the context
-// and return quickly.
-func WithTimeoutConsume(timeout time.Duration) ConsumeMiddleware {
-	return func(fn ConsumeFn) ConsumeFn {
-		return func(ctx context.Context, msg Message) error {
-			ctx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
-			return fn(ctx, msg)
-		}
-	}
-}
-
 type (
 	// RetryPolicy controls how a message is retried with the WithRetryConsume middleware.
 	// It exposes, at a high level, the following:
-	//   - the maximum number of retries
 	//   - the backoff function
 	//   - the final function, invoked after all retries have been exhausted
+	//   - the maximum number of attempts
+	//   - the timeout for each attempt
+	//	 - it recovers from panics and return an error
 	RetryPolicy struct {
 		// Backoff is the function that returns the duration to wait before
 		// retrying. The argument is the number of retries and the message. If
@@ -45,22 +33,33 @@ type (
 		// Final is invoked after all retries have been exhausted. For example,
 		// it could be used to move the message to a dead-letter queue, or it could
 		// be used to log the message. If the function returns an error, the
-		// message is retried. By default, it swallows the error.
+		// message is retried. By default, it swallows the error. Note that this
+		// function is not recovered from.
 		Final ConsumeFn
 		// MaxAttempts is the maximum number of attempts before giving up. If the
 		// value not strictly positive, it is set to DefaultMaxAttempts.
 		MaxAttempts int
+		// AttemptTimeout is the timeout for each attempt. If the value is not
+		// strictly positive, it is set to DefaultAttemptTimeout.
+		AttemptTimeout time.Duration
 	}
 )
 
 // DefaultMaxAttempts is the default maximum number of attempts.
-const DefaultMaxAttempts = 5
+const (
+	DefaultMaxAttempts    = 5
+	DefaultAttemptTimeout = 10 * time.Second
+)
 
 // WithRetryConsume returns a ConsumeMiddleware that wraps the ConsumeFn with
 // a retry policy. See RetryPolicy for more details.
 func WithRetryPolicyConsume(p RetryPolicy) ConsumeMiddleware {
 	if p.MaxAttempts < 1 {
 		p.MaxAttempts = DefaultMaxAttempts
+	}
+
+	if p.AttemptTimeout < 1 {
+		p.AttemptTimeout = DefaultAttemptTimeout
 	}
 
 	if p.Backoff == nil {
@@ -84,16 +83,30 @@ func WithRetryPolicyConsume(p RetryPolicy) ConsumeMiddleware {
 	}
 
 	return func(fn ConsumeFn) ConsumeFn {
+		// Ensure the consume function does not panic and a timeout is enforced.
+		run := func(ctx context.Context, msg Message) (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("consume function panicked: %v", r)
+				}
+			}()
+
+			ctx, cancel := context.WithTimeout(ctx, p.AttemptTimeout)
+			defer cancel()
+
+			return fn(ctx, msg)
+		}
+
 		return func(ctx context.Context, msg Message) error {
 			for i := 0; i < p.MaxAttempts; i++ {
-				if err := fn(ctx, msg); err == nil {
-					return nil
-				}
-
-				if backoff := p.Backoff(i, msg); backoff > 0 {
+				if backoff := p.Backoff(i, msg); i > 0 && backoff > 0 {
 					if err := wait(ctx, backoff); err != nil {
 						return err
 					}
+				}
+
+				if err := run(ctx, msg); err == nil {
+					return nil
 				}
 			}
 			return p.Final(ctx, msg)
