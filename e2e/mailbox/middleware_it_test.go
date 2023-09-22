@@ -118,6 +118,58 @@ func TestConsumeMiddleware(t *testing.T) {
 		})
 	})
 
+	t.Run("RoutingConsumer", func(t *testing.T) {
+		counting := func(str string) (mailbox.Route, *int) {
+			count := new(int)
+			return mailbox.Route{
+				Match: func(msg mailbox.Message) bool { return msg.ID == str },
+				Consume: func(ctx context.Context, msg mailbox.Message) error {
+					*count++
+					return nil
+				},
+			}, count
+		}
+
+		t.Run("ReturnsErrNoRouteMatch", func(t *testing.T) {
+			assert.ErrorIs(t, mailbox.RoutingConsumer()(ctx, mailbox.Message{}), mailbox.ErrNoRouteMatch)
+		})
+		t.Run("BasicMatch", func(t *testing.T) {
+			var (
+				one, c1   = counting("one")
+				two, c2   = counting("two")
+				three, c3 = counting("three")
+				router    = mailbox.RoutingConsumer(one, two, three)
+			)
+
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "one"}))
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "two"}))
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "two"}))
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "three"}))
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "three"}))
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "three"}))
+			assert.ErrorIs(t, router(ctx, mailbox.Message{ID: "four"}), mailbox.ErrNoRouteMatch)
+
+			assert.Equal(t, *c1, 1)
+			assert.Equal(t, *c2, 2)
+			assert.Equal(t, *c3, 3)
+		})
+
+		t.Run("OrderOfRoutes", func(t *testing.T) {
+			var (
+				one, c1 = counting("one")
+				two, c2 = counting("one")
+				router  = mailbox.RoutingConsumer(one, two)
+			)
+
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "one"}))
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "one"}))
+			assert.NoError(t, router(ctx, mailbox.Message{ID: "one"}))
+
+			assert.Equal(t, *c1, 3)
+			assert.Equal(t, *c2, 0)
+		})
+	})
+
 	t.Run("DeadLetterExample", func(t *testing.T) {
 		var (
 			db, err    = pg.Open("pgx")
