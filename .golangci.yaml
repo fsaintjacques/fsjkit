@@ -14,7 +14,7 @@ linters-settings:
     sections:
       - standard
       - default
-      - prefix(github.com/cerbos/cerbos)
+      - prefix(github.com/fsaintjacques/fsjkit)
       - blank
       - dot
     skip-generated: true
