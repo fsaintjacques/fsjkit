@@ -3,6 +3,8 @@ package mailboxtest
 import (
 	"context"
 	"database/sql"
+	"expvar"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -118,6 +120,66 @@ func TestConsumeMiddleware(t *testing.T) {
 		})
 	})
 
+	t.Run("WithObservabilityConsume", func(t *testing.T) {
+		var (
+			handler  = &testHandler{}
+			logger   = slog.New(handler)
+			vars     = new(expvar.Map)
+			consumer = func(ctx context.Context, msg mailbox.Message) error {
+				if msg.ID == "fail" {
+					return assert.AnError
+				}
+				return nil
+			}
+			failMsg = mailbox.Message{ID: "fail"}
+		)
+
+		t.Run("NoLoggerNoVars", func(t *testing.T) {
+			policy := mailbox.ObservabilityPolicy{}
+			consume := mailbox.WithObservabilityConsume(policy)(consumer)
+			assert.NoError(t, consume(ctx, msg))
+			assert.ErrorIs(t, consume(ctx, failMsg), assert.AnError)
+		})
+		t.Run("WithLogger", func(t *testing.T) {
+			policy := mailbox.ObservabilityPolicy{Logger: logger}
+			consume := mailbox.WithObservabilityConsume(policy)(consumer)
+			assert.NoError(t, consume(ctx, msg))
+			// By default, it doesn't log success.
+			assert.Empty(t, handler.invocations)
+			assert.ErrorIs(t, consume(ctx, failMsg), assert.AnError)
+			assert.Len(t, handler.invocations, 1)
+
+			handler.invocations = nil
+			policy.LogSuccess = true
+			consume = mailbox.WithObservabilityConsume(policy)(consumer)
+			assert.NoError(t, consume(ctx, msg))
+			assert.NoError(t, consume(ctx, msg))
+			assert.ErrorIs(t, consume(ctx, failMsg), assert.AnError)
+			assert.ErrorIs(t, consume(ctx, failMsg), assert.AnError)
+			assert.Len(t, handler.invocations, 4)
+		})
+		t.Run("WithVars", func(t *testing.T) {
+			policy := mailbox.ObservabilityPolicy{Metrics: vars}
+			consume := mailbox.WithObservabilityConsume(policy)(consumer)
+			assert.NoError(t, consume(ctx, msg))
+			assert.ErrorIs(t, consume(ctx, failMsg), assert.AnError)
+			assert.Equal(t, int64(1), vars.Get(mailbox.MessageConsumedKey).(*expvar.Int).Value())
+			assert.Equal(t, int64(1), vars.Get(mailbox.MessageConsumedFailedKey).(*expvar.Int).Value())
+		})
+		t.Run("WithEverything", func(t *testing.T) {
+			handler.invocations = nil
+			policy := mailbox.ObservabilityPolicy{Logger: logger, Metrics: vars, LogSuccess: true}
+			consume := mailbox.WithObservabilityConsume(policy)(consumer)
+			assert.NoError(t, consume(ctx, msg))
+			assert.NoError(t, consume(ctx, msg))
+			assert.ErrorIs(t, consume(ctx, failMsg), assert.AnError)
+			assert.ErrorIs(t, consume(ctx, failMsg), assert.AnError)
+			assert.Len(t, handler.invocations, 4)
+			assert.Equal(t, int64(2), vars.Get(mailbox.MessageConsumedKey).(*expvar.Int).Value())
+			assert.Equal(t, int64(2), vars.Get(mailbox.MessageConsumedFailedKey).(*expvar.Int).Value())
+		})
+	})
+
 	t.Run("RoutingConsumer", func(t *testing.T) {
 		counting := func(str string) (mailbox.Route, *int) {
 			count := new(int)
@@ -213,3 +275,15 @@ func TestConsumeMiddleware(t *testing.T) {
 		assert.True(t, consumed)
 	})
 }
+
+type testHandler struct {
+	invocations []slog.Record
+}
+
+func (h *testHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (h *testHandler) Handle(_ context.Context, r slog.Record) error {
+	h.invocations = append(h.invocations, r)
+	return nil
+}
+func (h *testHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *testHandler) WithGroup(_ string) slog.Handler      { return h }

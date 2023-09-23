@@ -79,9 +79,14 @@ func NewConsumer(ctx context.Context, transactor tx.Transactor, table string, co
 
 // Consume implements the Consumer interface.
 func (c *consumer) Consume(ctx context.Context) error {
-	return c.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		var msg Message
+	return c.transactor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic while consuming: %v", r)
+			}
+		}()
 
+		var msg Message
 		if err := tx.QueryRowContext(ctx, c.claimStmt).Scan(&msg.ID, &msg.Payload); errors.Is(err, sql.ErrNoRows) {
 			return ErrNoMessage
 		} else if err != nil {

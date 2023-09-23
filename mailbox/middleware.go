@@ -3,7 +3,9 @@ package mailbox
 import (
 	"context"
 	"errors"
+	"expvar"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/fsaintjacques/fsjkit/tx"
@@ -14,6 +16,90 @@ type (
 	// implement middleware that can be applied to the ConsumeFn.
 	ConsumeMiddleware = func(ConsumeFn) ConsumeFn
 )
+
+type (
+	// ObservabilityPolicy controls how a message is logged with the
+	// WithObservabilityConsume middleware. It also supports recording metrics.
+	// It exposes, at a high level, the following:
+	//   - the logger used to log errors
+	//   - the attributes to log
+	//   - whether successful message consumption is logged
+	//   - the expvar map used to record metrics
+	ObservabilityPolicy struct {
+		// Metrics is the expvar map used to record metrics. If nil, no metrics
+		// are recorded. Two metrics are recorded:
+		//   - messages_consumed_total: the number of messages successfully consumed
+		//   - messages_consumed_failed_total: the number of messages that failed to be consumed
+		// The metrics keys are statically defined by MessageConsumedKey and
+		// MessageConsumedFailedKey.
+		Metrics *expvar.Map
+		// Logger is the logger used to log events. If nil, no logging is done.
+		// By default, only errors are logged. See LogSuccess for more details.
+		Logger *slog.Logger
+		// Attrs is the function that returns the attributes to log. If nil, no
+		// attributes are extracted and logged. See slog's documentation for more
+		// details on attributes.
+		Attrs func(context.Context, Message) []any
+		// If set, successful message consumption is logged. Errors are always
+		// logged. If nil, no logging is done.
+		LogSuccess bool
+	}
+)
+
+const (
+	// MessageConsumedKey is the key used to record the number of messages
+	// successfully consumed.
+	MessageConsumedKey = "messages_consumed_total"
+	// MessageConsumedFailedKey is the key used to record the number of
+	// messages that failed to be consumed.
+	MessageConsumedFailedKey = "messages_consumed_failed_total"
+)
+
+// WithObservabilityConsume returns a ConsumeMiddleware that wraps the ConsumeFn
+// with observability, notably logging and metrics. See ObservabilityPolicy for
+// more details. Ideally, this middleware should immediately wrap the ConsumeFn
+// such that retry attempts are also logged.
+func WithObservabilityConsume(p ObservabilityPolicy) ConsumeMiddleware {
+	var (
+		successCount = new(expvar.Int)
+		failureCount = new(expvar.Int)
+	)
+
+	if p.Metrics != nil {
+		p.Metrics.Set(MessageConsumedKey, successCount)
+		p.Metrics.Set(MessageConsumedFailedKey, failureCount)
+	}
+
+	if p.Attrs == nil {
+		p.Attrs = func(context.Context, Message) []any { return nil }
+	}
+
+	return func(fn ConsumeFn) ConsumeFn {
+		return func(ctx context.Context, msg Message) (err error) {
+			err = fn(ctx, msg)
+
+			if p.Logger != nil {
+				if err != nil {
+					var body = fmt.Sprintf("message consumption failed: %s: %v", msg.ID, err)
+					p.Logger.ErrorContext(ctx, body, p.Attrs(ctx, msg)...)
+				} else if p.LogSuccess {
+					var body = fmt.Sprintf("message consumption succeeded: %s", msg.ID)
+					p.Logger.InfoContext(ctx, body, p.Attrs(ctx, msg)...)
+				}
+			}
+
+			if p.Metrics != nil {
+				if err != nil {
+					failureCount.Add(1)
+				} else {
+					successCount.Add(1)
+				}
+			}
+
+			return
+		}
+	}
+}
 
 type (
 	// RetryPolicy controls how a message is retried with the WithRetryConsume middleware.
@@ -85,15 +171,8 @@ func WithRetryPolicyConsume(p RetryPolicy) ConsumeMiddleware {
 	return func(fn ConsumeFn) ConsumeFn {
 		// Ensure the consume function does not panic and a timeout is enforced.
 		run := func(ctx context.Context, msg Message) (err error) {
-			defer func() {
-				if r := recover(); r != nil {
-					err = fmt.Errorf("consume function panicked: %v", r)
-				}
-			}()
-
 			ctx, cancel := context.WithTimeout(ctx, p.AttemptTimeout)
 			defer cancel()
-
 			return fn(ctx, msg)
 		}
 
