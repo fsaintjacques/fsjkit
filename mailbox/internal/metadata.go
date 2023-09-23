@@ -17,6 +17,9 @@ func (m *Metadata) Value() (driver.Value, error) {
 }
 
 func (m *Metadata) Scan(value any) error {
+	if value == nil {
+		return nil
+	}
 	b, ok := value.([]byte)
 	if !ok {
 		return errors.New("type assertion to []byte failed")
