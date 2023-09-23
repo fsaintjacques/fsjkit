@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/fsaintjacques/fsjkit/mailbox/internal"
 	"github.com/fsaintjacques/fsjkit/tx"
 )
 
@@ -71,7 +72,7 @@ func NewConsumer(ctx context.Context, transactor tx.Transactor, table string, co
 		transactor: transactor,
 		consume:    consume,
 		table:      table,
-		claimStmt:  "SELECT id, payload FROM \"" + table + "\" ORDER BY create_time LIMIT 1 FOR UPDATE SKIP LOCKED",
+		claimStmt:  "SELECT id, metadata, payload FROM \"" + table + "\" ORDER BY create_time LIMIT 1 FOR UPDATE SKIP LOCKED",
 		deleteStmt: "DELETE FROM \"" + table + "\" WHERE id = $1",
 		countStmt:  "SELECT COUNT(*) FROM \"" + table + "\"",
 	}, nil
@@ -86,12 +87,17 @@ func (c *consumer) Consume(ctx context.Context) error {
 			}
 		}()
 
-		var msg Message
-		if err := tx.QueryRowContext(ctx, c.claimStmt).Scan(&msg.ID, &msg.Payload); errors.Is(err, sql.ErrNoRows) {
+		var (
+			msg      Message
+			metadata internal.Metadata
+		)
+		if err := tx.QueryRowContext(ctx, c.claimStmt).Scan(&msg.ID, &metadata, &msg.Payload); errors.Is(err, sql.ErrNoRows) {
 			return ErrNoMessage
 		} else if err != nil {
 			return fmt.Errorf("failed claiming message: %w", err)
 		}
+
+		msg.Metadata = map[string]string(metadata)
 
 		if err := c.consume(ctx, msg); err != nil {
 			return fmt.Errorf("failed consuming message: %w", err)

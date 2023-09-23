@@ -73,7 +73,26 @@ func TestConsumer(t *testing.T) {
 			assert.NoError(t, c.Consume(ctx))
 			assert.ErrorIs(t, mailbox.ErrNoMessage, c.Consume(ctx))
 		})
-
+		t.Run("WithPayloadAndMetadata", func(t *testing.T) {
+			var (
+				metadata = map[string]string{"foo": "bar", "baz": "qux"}
+				payload  = []byte("payload")
+				id       = "an-id"
+				consume  = func(ctx context.Context, msg mailbox.Message) error {
+					assert.Equal(t, id, msg.ID)
+					assert.Equal(t, metadata, msg.Metadata)
+					assert.Equal(t, payload, msg.Payload)
+					return nil
+				}
+				c, err = mailbox.NewConsumer(ctx, transactor, table, consume)
+			)
+			require.NoError(t, err)
+			tx, err := db.Begin()
+			require.NoError(t, err)
+			require.NoError(t, m.Put(ctx, tx, mailbox.Message{ID: id, Metadata: metadata, Payload: payload}))
+			require.NoError(t, tx.Commit())
+			assert.NoError(t, c.Consume(ctx))
+		})
 		t.Run("EnsureMessageIsConsumed", func(t *testing.T) {
 			put("a-message")
 			assert.NoError(t, c.Consume(ctx))
