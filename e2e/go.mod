@@ -3,8 +3,8 @@ module e2e
 go 1.21
 
 require (
-	github.com/fsaintjacques/fsjkit/mailbox v0.0.0-00010101000000-000000000000
-	github.com/fsaintjacques/fsjkit/tx v0.0.0
+	github.com/fsaintjacques/fsjkit/mailbox v1.0.0
+	github.com/fsaintjacques/fsjkit/tx v1.0.0
 	github.com/jackc/pgx/v5 v5.3.1
 	github.com/ory/dockertest/v3 v3.10.0
 	github.com/stretchr/testify v1.8.2
