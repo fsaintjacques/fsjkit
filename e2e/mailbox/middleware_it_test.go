@@ -16,6 +16,7 @@ import (
 
 func TestConsumeMiddleware(t *testing.T) {
 	var (
+		opts     = tx.TransactorOptions{}
 		noop     = func(ctx context.Context, msg mailbox.Message) error { return nil }
 		failing  = func(ctx context.Context, msg mailbox.Message) error { return assert.AnError }
 		blocking = func(ctx context.Context, msg mailbox.Message) error { <-ctx.Done(); return ctx.Err() }
@@ -97,13 +98,13 @@ func TestConsumeMiddleware(t *testing.T) {
 		require.NoError(t, err)
 
 		put := func(msg mailbox.Message) {
-			require.NoError(t, tx.NewTransactor(db).InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			require.NoError(t, tx.NewTransactor(db, opts).InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 				return mbox.Put(ctx, tx, msg)
 			}))
 		}
 
 		t.Run("MoveToMailbox", func(t *testing.T) {
-			transactor := tx.NewTransactor(db)
+			transactor := tx.NewTransactor(db, opts)
 			c, err := mailbox.NewConsumer(ctx, transactor, t1, mailbox.WithMoveToMailbox(deadletter))
 			require.NoError(t, err)
 
@@ -251,11 +252,11 @@ func TestConsumeMiddleware(t *testing.T) {
 		require.NoError(t, err)
 
 		// Put a message in t1
-		require.NoError(t, tx.NewTransactor(db).InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		require.NoError(t, tx.NewTransactor(db, opts).InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			return mbox.Put(ctx, tx, mailbox.Message{ID: "to-deadletter"})
 		}))
 
-		transactor := tx.NewTransactor(db)
+		transactor := tx.NewTransactor(db, opts)
 		c, err := mailbox.NewConsumer(ctx, transactor, t1, consume)
 		require.NoError(t, err)
 		assert.NoError(t, c.Consume(ctx))

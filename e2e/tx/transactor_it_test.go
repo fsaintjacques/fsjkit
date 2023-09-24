@@ -31,14 +31,17 @@ func TestTransactor(t *testing.T) {
 	db, err := pg.Open("pgx")
 	require.NoError(t, err)
 
-	var ctx = context.Background()
+	var (
+		ctx  = context.Background()
+		opts tx.TransactorOptions
+	)
 
 	t.Run("NewTransactor", func(t *testing.T) {
 		t.Run("ShouldPanicOnNilOpener", func(t *testing.T) {
-			assert.Panics(t, func() { tx.NewTransactor(nil) })
+			assert.Panics(t, func() { tx.NewTransactor(nil, opts) })
 		})
 		t.Run("WithTxOptions", func(t *testing.T) {
-			txor := tx.NewTransactor(db, tx.WithTxOptions(&sql.TxOptions{ReadOnly: true}))
+			txor := tx.NewTransactor(db, tx.TransactorOptions{BeginOptions: &sql.TxOptions{ReadOnly: true}})
 			assert.NotNil(t, txor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 				// This should fail because the transaction is read-only.
 				mustFail(ctx, tx, "CREATE TEMP TABLE foo (id int)")
@@ -48,7 +51,7 @@ func TestTransactor(t *testing.T) {
 	})
 
 	t.Run("InTx", func(t *testing.T) {
-		txor := tx.NewTransactor(db)
+		txor := tx.NewTransactor(db, opts)
 		t.Run("CommitsOnNoError", func(t *testing.T) {
 			assert.NoError(t, txor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 				mustExec(ctx, tx, "CREATE TABLE commits_on_nil (id int)")
@@ -108,7 +111,7 @@ func TestTransactor(t *testing.T) {
 		})
 
 		t.Run("PartialStateWithSavepoints", func(t *testing.T) {
-			txor := tx.NewTransactor(db, tx.WithSavepoints())
+			txor := tx.NewTransactor(db, tx.TransactorOptions{EnableSavepoints: true})
 
 			assert.NoError(t, txor.InTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 				mustExec(ctx, tx, "CREATE TABLE test_savepoints (id int)")

@@ -11,9 +11,13 @@ type (
 	// The function should not commit or rollback the transaction.
 	Closure func(context.Context, *sql.Tx) error
 
-	// TransactorOption affects the behavior of a Transactor.
-	TransactorOption interface {
-		apply(*transactor)
+	// Middleware is a function that is executed before and after the closure.
+	Middleware func(Closure) Closure
+
+	// Opener is an interface for database connections that support opening
+	// transactions. This interface is implemented by *sql.DB and *sql.Conn.
+	Opener interface {
+		BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
 	}
 
 	// The transactor is responsible for creating and committing or rolling back
@@ -27,67 +31,41 @@ type (
 		InTx(context.Context, Closure) error
 	}
 
-	// Middleware is a function that is executed before and after the closure.
-	Middleware func(Closure) Closure
-
-	// Opener is an interface for database connections that support opening
-	// transactions. This interface is implemented by *sql.DB and *sql.Conn.
-	Opener interface {
-		BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
+	TransactorOptions struct {
+		// sql.TxOptions to pass the opener when it begins a transaction. This does
+		// not apply to new savepoint transactions (only the root transaction).
+		BeginOptions *sql.TxOptions
+		// Middlewares to execute before and after the closure. The middlewares are
+		// executed in the order they are passed. The middlewares are executed only
+		// once per opened transaction, not for each recursive call to InTx.
+		BeginMiddlewares []Middleware
+		// If true, the transactor will use savepoints to create nested transactions.
+		// Make sure the database supports savepoints before enabling this option.
+		EnableSavepoints bool
 	}
 )
-
-// WithTxOptions sets the transaction options for the transactor when it
-// creates a transaction.
-func WithTxOptions(opts *sql.TxOptions) TransactorOption {
-	return txOptFn(func(t *transactor) {
-		t.txOptions = opts
-	})
-}
-
-// WithSavepoints enables the use of savepoints for the transactor. This
-// allows the transactor to create nested transactions. Don't use this option
-// if the database does not support savepoints.
-//
-// When a failing children InTx is rolled back, the parent InTx is not rolled
-// back, only the savepoint opened by the child is rolled back. This allows
-// the parent to continue executing and commit or rollback the transaction depending
-// on the course of action decided by the parent.
-func WithSavepoints() TransactorOption {
-	return txOptFn(func(t *transactor) {
-		t.useSavepoints = true
-	})
-}
-
-// WithMiddlewares adds middlewares to the transactor. Middlewares are
-// functions that are executed before and after the closure. The middlewares
-// can be used to perform logging, metrics, or other operations. The middle
-// functions are executed in the order they are passed. The middlewares are
-// executed only once per opened transaction, not for each recursive call to
-// InTx.
-//
-// If a middleware returns an error, the transaction is rolled back and the
-// error is returned to the caller.
-//
-// Passing this option multiple times will overwrite the existing list of
-// middlewares.
-func WithMiddlewares(middlewares ...Middleware) TransactorOption {
-	return txOptFn(func(t *transactor) {
-		t.middlewareChain = chainMiddlewares(middlewares...)
-	})
-}
 
 // NewTransactor creates a new Transactor that uses the given a Opener.
 // This function panics if the Opener is nil. The transactor is responsible
 // for creating and committing or rolling back transactions.
-func NewTransactor(o Opener, opts ...TransactorOption) Transactor {
+func NewTransactor(o Opener, opts TransactorOptions) Transactor {
 	if o == nil {
 		panic("NewTransactor: opener is nil")
 	}
 	t := &transactor{opener: o}
-	for _, opt := range opts {
-		opt.apply(t)
+
+	if opts.BeginOptions != nil {
+		t.txOptions = opts.BeginOptions
 	}
+
+	if opts.BeginMiddlewares != nil {
+		t.middlewareChain = chainMiddlewares(opts.BeginMiddlewares...)
+	}
+
+	if opts.EnableSavepoints {
+		t.enableSavepoints = true
+	}
+
 	return t
 }
 
@@ -142,7 +120,7 @@ func (t *transactor) begin(ctx context.Context, opts *sql.TxOptions) (*savepoint
 		return nil, false, fmt.Errorf("t.opener.BeginTx: %w", err)
 	}
 
-	return newSavepointTx(tx, t.useSavepoints), true, nil
+	return newSavepointTx(tx, t.enableSavepoints), true, nil
 }
 
 func chainMiddlewares(middlewares ...Middleware) Middleware {
@@ -158,14 +136,8 @@ type (
 	transactor struct {
 		opener Opener
 
-		middlewareChain Middleware
-		txOptions       *sql.TxOptions
-		useSavepoints   bool
+		middlewareChain  Middleware
+		txOptions        *sql.TxOptions
+		enableSavepoints bool
 	}
-
-	txOptFn func(*transactor)
 )
-
-func (fn txOptFn) apply(t *transactor) {
-	fn(t)
-}
