@@ -17,7 +17,7 @@ func TestConsumer(t *testing.T) {
 
 	var (
 		ctx        = context.Background()
-		db, err    = pg.Open("pgx")
+		db, err    = pg.Open()
 		transactor = tx.NewTransactor(db, tx.TransactorOptions{})
 		table      = createMailboxTable(t, db)
 		m          = mailbox.NewMailbox(table)

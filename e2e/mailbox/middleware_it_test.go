@@ -90,7 +90,7 @@ func TestConsumeMiddleware(t *testing.T) {
 
 	t.Run("WithMoveToMailbox", func(t *testing.T) {
 		var (
-			db, err    = pg.Open("pgx")
+			db, err    = pg.Open()
 			t1, t2     = createMailboxTable(t, db), createMailboxTable(t, db)
 			mbox       = mailbox.NewMailbox(t1)
 			deadletter = mailbox.NewMailbox(t2)
@@ -235,7 +235,7 @@ func TestConsumeMiddleware(t *testing.T) {
 
 	t.Run("DeadLetterExample", func(t *testing.T) {
 		var (
-			db, err    = pg.Open("pgx")
+			db, err    = pg.Open()
 			t1, t2     = createMailboxTable(t, db), createMailboxTable(t, db)
 			mbox       = mailbox.NewMailbox(t1)
 			deadletter = mailbox.NewMailbox(t2)
