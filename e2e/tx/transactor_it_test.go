@@ -28,7 +28,7 @@ func TestTransactor(t *testing.T) {
 		assert.NoError(t, tx.QueryRowContext(ctx, query).Scan(dest...))
 	}
 
-	db, err := pg.Open("pgx")
+	db, err := pg.Open()
 	require.NoError(t, err)
 
 	var (

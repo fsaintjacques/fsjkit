@@ -1,16 +1,17 @@
 package mailboxtest
 
 import (
-	"e2e/helpers"
 	"testing"
 
+	"github.com/fsaintjacques/fsjkit/docker"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-var pg *helpers.PostgresService
+var (
+	pgCfg = docker.PostgresServiceConfig{Repository: "postgres", Tag: "15", Database: "test", Driver: "pgx"}
+	pg    = docker.NewPostgresService(pgCfg)
+)
 
 func TestMain(m *testing.M) {
-	helpers.MainWithPostgres(m, &pg, &helpers.PostgresServiceConfig{
-		Repository: "postgres", Tag: "15", Database: "test",
-	})
+	docker.MainWithServices(m, pg)
 }

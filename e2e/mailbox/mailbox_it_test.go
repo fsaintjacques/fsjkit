@@ -48,7 +48,7 @@ func TestMailbox(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	db, err := pg.Open("pgx")
+	db, err := pg.Open()
 	require.NoError(t, err)
 
 	table := createMailboxTable(t, db)

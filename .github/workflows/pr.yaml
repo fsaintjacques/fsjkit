@@ -7,7 +7,7 @@ on:
       - 'v*'
 
 env:
-  MODULES: "./e2e/... ./mailbox/... ./tx/..."
+  MODULES: "./docker/... ./e2e/... ./mailbox/... ./tx/..."
 
 jobs:
   test:
