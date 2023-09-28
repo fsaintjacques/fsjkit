@@ -3,10 +3,11 @@ module e2e
 go 1.21
 
 require (
+	github.com/fsaintjacques/fsjkit/docker v1.0.1
 	github.com/fsaintjacques/fsjkit/mailbox v1.0.0
 	github.com/fsaintjacques/fsjkit/tx v1.0.0
 	github.com/jackc/pgx/v5 v5.3.1
-	github.com/ory/dockertest/v3 v3.10.0
+	github.com/redis/go-redis/v9 v9.2.1
 	github.com/stretchr/testify v1.8.2
 )
 
@@ -34,9 +35,9 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.2 // indirect
 	github.com/opencontainers/runc v1.1.6 // indirect
+	github.com/ory/dockertest/v3 v3.10.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/redis/go-redis/v9 v9.2.1 // indirect
 	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
